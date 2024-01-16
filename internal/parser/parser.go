@@ -99,46 +99,23 @@ func parseQuestion(buffer []byte, offset int) (Question, int) {
 
 // https://cabulous.medium.com/dns-message-how-to-read-query-and-response-message-cfebcb4fe817
 // It handles normal labels and compressed labels.
-func parseDomainName(buffer []byte, offset int) (string, int, error) {
+func parseDomainName(buffer []byte, offset int) (qname string, n int) {
 	var labels []string
-	jumped := false
-	originalOffset := offset
+	startOff := offset
 
 	for {
-		if offset >= len(buffer) {
-			return "", 0, fmt.Errorf("offset beyond buffer size")
+		len := int(buffer[startOff])
+		startOff += 1
+		if len == 0 {
+			break
 		}
-
-		length := int(buffer[offset])
-		offset++
-
-		if length == 0 {
-			break // End of the domain name
-		}
-
-		if length >= 192 { // Name compression
-			if !jumped {
-				originalOffset = offset + 1 // Update originalOffset only if it's the first jump
-				jumped = true
-			}
-			b2 := int(buffer[offset])
-			offset = (length-192)<<8 + b2 // Calculate the jump offset
-			continue
-		}
-
-		// Validate the label length
-		if offset+length > len(buffer) {
-			return "", 0, fmt.Errorf("label extends beyond buffer size")
-		}
-		label := string(buffer[offset : offset+length])
+		label := string(buffer[startOff : startOff+len])
 		labels = append(labels, label)
-		offset += length
-		if !jumped {
-			originalOffset = offset
-		}
+		startOff += len
 	}
-
-	return strings.Join(labels, "."), originalOffset, nil
+	qname = strings.Join(labels, ".")
+	n = startOff - offset
+	return
 }
 
 func Read(buffer []byte, n int) (Payload, error) {
