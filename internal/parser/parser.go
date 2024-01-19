@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 type Header struct {
@@ -28,7 +27,7 @@ type Resource struct {
 	RClass   uint16
 	RTtl     uint32 // time in seconds before cache for this record is invalidated. 0 means that it shall not be cached
 	RDlength uint16 // specify the length of r data field
-	RData    []byte
+	RData    []byte // This can be an IP address for A records, a hostname for CNAME
 }
 
 type Payload struct {
@@ -55,7 +54,7 @@ func parseHeader(buffer []byte) Header {
 
 func parseResource(buffer []byte, offset int) (Resource, int) {
 	// Parse RNAME
-	rname, n, _ := parseDomainName(buffer, offset)
+	rname, n := parseDomainName(buffer, offset)
 	offset += n
 
 	// Parse RTYPE
@@ -70,11 +69,21 @@ func parseResource(buffer []byte, offset int) (Resource, int) {
 	rttl := binary.BigEndian.Uint32(buffer[offset : offset+4])
 	offset += 4
 
+	// decode rData based on Rtype and Rclass
 	// parse RDLength
 	rdlen := binary.BigEndian.Uint16(buffer[offset : offset+2])
 	offset += 2
 
-	rddata := buffer[offset : offset+int(rdlen)]
+	var rddata []byte
+
+	// NS record
+	if rtype == 2 && rclass == 1 {
+		rdataBuffer := buffer[offset : offset+int(rdlen)]
+		domainName, _ := parseDomainName(rdataBuffer, 0)
+		rddata = []byte(domainName)
+	} else {
+		rddata = buffer[offset : offset+int(rdlen)]
+	}
 	offset += int(rdlen)
 
 	return Resource{RName: rname, RType: rtype, RClass: rclass, RTtl: rttl, RDlength: rdlen, RData: rddata}, offset
@@ -83,7 +92,7 @@ func parseResource(buffer []byte, offset int) (Resource, int) {
 // parseQuestion parses the question section of a DNS message
 func parseQuestion(buffer []byte, offset int) (Question, int) {
 	// Parse QNAME
-	qname, n, _ := parseDomainName(buffer, offset)
+	qname, n := parseDomainName(buffer, offset)
 	offset += n
 
 	// Parse QTYPE
@@ -100,20 +109,32 @@ func parseQuestion(buffer []byte, offset int) (Question, int) {
 // https://cabulous.medium.com/dns-message-how-to-read-query-and-response-message-cfebcb4fe817
 // It handles normal labels and compressed labels.
 func parseDomainName(buffer []byte, offset int) (qname string, n int) {
-	var labels []string
+	labels := ""
 	startOff := offset
 
 	for {
-		len := int(buffer[startOff])
-		startOff += 1
-		if len == 0 {
+			len := int(buffer[startOff])
+		// length 192 denotes a pointer to a previous seen domain name, use next octet to get length of domain inside buffer pointer to previous seen messages
+
+		if len == 192 {
+			label, _ := parseDomainName(buffer, int(buffer[startOff+1]))
+			labels += label
+			// jump over pointer and offset
+			startOff += 2
 			break
+		} else {
+			label := string(buffer[startOff+1 : startOff+1+len])
+			startOff += len + 1
+			if buffer[len] == 0 {
+				labels += label
+				startOff++
+				break
+			} else {
+				labels += label + "."
+			}
 		}
-		label := string(buffer[startOff : startOff+len])
-		labels = append(labels, label)
-		startOff += len
 	}
-	qname = strings.Join(labels, ".")
+	qname = labels
 	n = startOff - offset
 	return
 }
