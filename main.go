@@ -7,15 +7,12 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"time"
+
 	"github.com/gertanoh/dns-resolver/internal/parser"
 )
 
 // Map of question and clientIps
 var registryMap = map[parser.Question]string{}
-
-// cache of successfull DNS resolutions
-var cacheDnsResolutions = map[parser.Question]parser.Resource{}
 
 func main() {
 
@@ -48,7 +45,6 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		fmt.Println("----------------Questions---------------------")
 		question, err := parser.Read(buffer, n)
 		if err != nil {
 			log.Println(err)
@@ -58,18 +54,6 @@ func main() {
 		for _, q := range question.Questions {
 			registryMap[q] = clientAddr.String()
 		}
-
-		// check if cache hit
-		// Using assumptions that QDCount is usually 1
-		for _, q := range question.Questions {
-			if r, ok := cacheDnsResolutions[q]; ok {
-				if r.RExpire.Before(time.Now()) {
-					fmt.Println("cache hit")
-					// format resource and send answer
-				}
-			}
-		}
-		// think about cleaning up the cache
 
 		// forward request to Google DNS
 		googleDNS := "8.8.8.8:53"
@@ -95,18 +79,8 @@ func main() {
 		}
 		forwardConn.Close()
 
-		fmt.Println("----------------Answer---------------------")
-		answer, err :=parser.Read(buffer, answerCount)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		for _, q := range answer.Questions {
-			cacheDnsResolutions[q] = answer.Answers[0]
-			if addr, ok := registryMap[q]; ok {
-				clientUdpAddr, _ := net.ResolveUDPAddr("udp", addr)
-				conn.WriteToUDP(buffer[:answerCount], clientUdpAddr)
-			}
-		}
+		fmt.Println("Answer")
+		parser.Read(buffer, answerCount)
+		conn.WriteToUDP(buffer[:answerCount], clientAddr)
 	}
 }
